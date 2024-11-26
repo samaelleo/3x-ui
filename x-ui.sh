@@ -818,7 +818,6 @@ update_geo() {
     echo -e "${green}\t0.${plain} Back to Main Menu"
     read -p "Choose an option: " choice
 
-    systemctl stop x-ui
     cd /usr/local/x-ui/bin
 
     case "$choice" in
@@ -826,6 +825,7 @@ update_geo() {
         show_menu
         ;;
     1)
+        systemctl stop x-ui
         rm -f geoip.dat geosite.dat
         wget -N https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
         wget -N https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
@@ -833,6 +833,7 @@ update_geo() {
         restart
         ;;
     2)
+        systemctl stop x-ui
         rm -f geoip_IR.dat geosite_IR.dat
         wget -O geoip_IR.dat -N https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
         wget -O geosite_IR.dat -N https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
@@ -840,6 +841,7 @@ update_geo() {
         restart
         ;;
     3)
+        systemctl stop x-ui
         rm -f geoip_VN.dat geosite_VN.dat
         wget -O geoip_VN.dat -N https://github.com/vuong2023/vn-v2ray-rules/releases/latest/download/geoip.dat
         wget -O geosite_VN.dat -N https://github.com/vuong2023/vn-v2ray-rules/releases/latest/download/geosite.dat
@@ -852,7 +854,6 @@ update_geo() {
         ;;
     esac
 
-    systemctl start x-ui
     before_show_menu
 }
 
@@ -1116,76 +1117,119 @@ ssl_cert_issue() {
 }
 
 ssl_cert_issue_CF() {
-    echo -E ""
-    LOGD "******Instructions for use******"
-    LOGI "This Acme script requires the following data:"
-    LOGI "1.Cloudflare Registered e-mail"
-    LOGI "2.Cloudflare Global API Key"
-    LOGI "3.The domain name that has been resolved dns to the current server by Cloudflare"
-    LOGI "4.The script applies for a certificate. The default installation path is /root/cert "
-    confirm "Confirmed?[y/n]" "y"
+    local existing_webBasePath=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'webBasePath: .+' | awk '{print $2}')
+    local existing_port=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'port: .+' | awk '{print $2}')
+    LOGI "****** Instructions for Use ******"
+    LOGI "Follow the steps below to complete the process:"
+    LOGI "1. Cloudflare Registered E-mail."
+    LOGI "2. Cloudflare Global API Key."
+    LOGI "3. The Domain Name."
+    LOGI "4. Once the certificate is issued, you will be prompted to set the certificate for the panel (optional)."
+    LOGI "5. The script also supports automatic renewal of the SSL certificate after installation."
+
+    confirm "Do you confirm the information and wish to proceed? [y/n]" "y"
+
     if [ $? -eq 0 ]; then
-        # check for acme.sh first
+        # Check for acme.sh first
         if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
-            echo "acme.sh could not be found. we will install it"
+            echo "acme.sh could not be found. We will install it."
             install_acme
             if [ $? -ne 0 ]; then
-                LOGE "install acme failed, please check logs"
+                LOGE "Install acme failed, please check logs."
                 exit 1
             fi
         fi
+
         CF_Domain=""
-        CF_GlobalKey=""
-        CF_AccountEmail=""
-        certPath=/root/cert
+        certPath="/root/cert-CF"
         if [ ! -d "$certPath" ]; then
-            mkdir $certPath
+            mkdir -p $certPath
         else
             rm -rf $certPath
-            mkdir $certPath
+            mkdir -p $certPath
         fi
+
         LOGD "Please set a domain name:"
-        read -p "Input your domain here:" CF_Domain
-        LOGD "Your domain name is set to:${CF_Domain}"
+        read -p "Input your domain here: " CF_Domain
+        LOGD "Your domain name is set to: ${CF_Domain}"
+
+        # Set up Cloudflare API details
+        CF_GlobalKey=""
+        CF_AccountEmail=""
         LOGD "Please set the API key:"
-        read -p "Input your key here:" CF_GlobalKey
-        LOGD "Your API key is:${CF_GlobalKey}"
+        read -p "Input your key here: " CF_GlobalKey
+        LOGD "Your API key is: ${CF_GlobalKey}"
+
         LOGD "Please set up registered email:"
-        read -p "Input your email here:" CF_AccountEmail
-        LOGD "Your registered email address is:${CF_AccountEmail}"
+        read -p "Input your email here: " CF_AccountEmail
+        LOGD "Your registered email address is: ${CF_AccountEmail}"
+
+        # Set the default CA to Let's Encrypt
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         if [ $? -ne 0 ]; then
-            LOGE "Default CA, Lets'Encrypt fail, script exiting..."
+            LOGE "Default CA, Let'sEncrypt fail, script exiting..."
             exit 1
         fi
+
         export CF_Key="${CF_GlobalKey}"
-        export CF_Email=${CF_AccountEmail}
+        export CF_Email="${CF_AccountEmail}"
+
+        # Issue the certificate using Cloudflare DNS
         ~/.acme.sh/acme.sh --issue --dns dns_cf -d ${CF_Domain} -d *.${CF_Domain} --log
         if [ $? -ne 0 ]; then
             LOGE "Certificate issuance failed, script exiting..."
             exit 1
         else
-            LOGI "Certificate issued Successfully, Installing..."
+            LOGI "Certificate issued successfully, Installing..."
         fi
-        ~/.acme.sh/acme.sh --installcert -d ${CF_Domain} -d *.${CF_Domain} --ca-file /root/cert/ca.cer \
-            --cert-file /root/cert/${CF_Domain}.cer --key-file /root/cert/${CF_Domain}.key \
-            --fullchain-file /root/cert/fullchain.cer
+
+        # Install the certificate
+        mkdir -p ${certPath}/${CF_Domain}
+        if [ $? -ne 0 ]; then
+            LOGE "Failed to create directory: ${certPath}/${CF_Domain}"
+            exit 1
+        fi
+
+        ~/.acme.sh/acme.sh --installcert -d ${CF_Domain} -d *.${CF_Domain} \
+            --fullchain-file ${certPath}/${CF_Domain}/fullchain.pem \
+            --key-file ${certPath}/${CF_Domain}/privkey.pem
+
         if [ $? -ne 0 ]; then
             LOGE "Certificate installation failed, script exiting..."
             exit 1
         else
-            LOGI "Certificate installed Successfully,Turning on automatic updates..."
+            LOGI "Certificate installed successfully, Turning on automatic updates..."
         fi
+
+        # Enable auto-update
         ~/.acme.sh/acme.sh --upgrade --auto-upgrade
         if [ $? -ne 0 ]; then
-            LOGE "Auto update setup Failed, script exiting..."
-            ls -lah cert
-            chmod 755 $certPath
+            LOGE "Auto update setup failed, script exiting..."
             exit 1
         else
-            LOGI "The certificate is installed and auto-renewal is turned on, Specific information is as follows"
-            ls -lah cert
-            chmod 755 $certPath
+            LOGI "The certificate is installed and auto-renewal is turned on. Specific information is as follows:"
+            ls -lah ${certPath}/${CF_Domain}
+            chmod 755 ${certPath}/${CF_Domain}
+        fi
+
+        # Prompt user to set panel paths after successful certificate installation
+        read -p "Would you like to set this certificate for the panel? (y/n): " setPanel
+        if [[ "$setPanel" == "y" || "$setPanel" == "Y" ]]; then
+            local webCertFile="${certPath}/${CF_Domain}/fullchain.pem"
+            local webKeyFile="${certPath}/${CF_Domain}/privkey.pem"
+
+            if [[ -f "$webCertFile" && -f "$webKeyFile" ]]; then
+                /usr/local/x-ui/x-ui cert -webCert "$webCertFile" -webCertKey "$webKeyFile"
+                LOGI "Panel paths set for domain: $CF_Domain"
+                LOGI "  - Certificate File: $webCertFile"
+                LOGI "  - Private Key File: $webKeyFile"
+                echo -e "${green}Access URL: https://${CF_Domain}:${existing_port}${existing_webBasePath}${plain}"
+                restart
+            else
+                LOGE "Error: Certificate or private key file not found for domain: $CF_Domain."
+            fi
+        else
+            LOGI "Skipping panel path setting."
         fi
     else
         show_menu
@@ -1195,34 +1239,41 @@ ssl_cert_issue_CF() {
 run_speedtest() {
     # Check if Speedtest is already installed
     if ! command -v speedtest &>/dev/null; then
-        # If not installed, install it
-        local pkg_manager=""
-        local speedtest_install_script=""
-
-        if command -v dnf &>/dev/null; then
-            pkg_manager="dnf"
-            speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh"
-        elif command -v yum &>/dev/null; then
-            pkg_manager="yum"
-            speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh"
-        elif command -v apt-get &>/dev/null; then
-            pkg_manager="apt-get"
-            speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh"
-        elif command -v apt &>/dev/null; then
-            pkg_manager="apt"
-            speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh"
-        fi
-
-        if [[ -z $pkg_manager ]]; then
-            echo "Error: Package manager not found. You may need to install Speedtest manually."
-            return 1
+        # If not installed, determine installation method
+        if command -v snap &>/dev/null; then
+            # Use snap to install Speedtest
+            echo "Installing Speedtest using snap..."
+            snap install speedtest
         else
-            curl -s $speedtest_install_script | bash
-            $pkg_manager install -y speedtest
+            # Fallback to using package managers
+            local pkg_manager=""
+            local speedtest_install_script=""
+
+            if command -v dnf &>/dev/null; then
+                pkg_manager="dnf"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh"
+            elif command -v yum &>/dev/null; then
+                pkg_manager="yum"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh"
+            elif command -v apt-get &>/dev/null; then
+                pkg_manager="apt-get"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh"
+            elif command -v apt &>/dev/null; then
+                pkg_manager="apt"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh"
+            fi
+
+            if [[ -z $pkg_manager ]]; then
+                echo "Error: Package manager not found. You may need to install Speedtest manually."
+                return 1
+            else
+                echo "Installing Speedtest using $pkg_manager..."
+                curl -s $speedtest_install_script | bash
+                $pkg_manager install -y speedtest
+            fi
         fi
     fi
 
-    # Run Speedtest
     speedtest
 }
 
@@ -1243,7 +1294,7 @@ create_iplimit_jails() {
 enabled=true
 backend=auto
 filter=3x-ipl
-action = %(known/action)s[name=%(__name__)s, protocol="%(protocol)s", chain="%(chain)s"]
+action=3x-ipl
 logpath=${iplimit_log_path}
 maxretry=2
 findtime=32
@@ -1279,8 +1330,6 @@ actionunban = <iptables> -D f2b-<name> -s <ip> -j <blocktype>
               echo "\$(date +"%%Y/%%m/%%d %%H:%%M:%%S")   UNBAN   [Email] = <F-USER> [IP] = <ip> unbanned." >> ${iplimit_banned_log_path}
 
 [Init]
-# Use default settings from iptables-common.conf
-# This will automatically handle both IPv4 and IPv6
 name = default
 protocol = tcp
 chain = INPUT
